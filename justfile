@@ -155,19 +155,21 @@ see-coverage:
 lint:
     cargo clippy -- -D warnings
 
-# Full quality gate: gen + fmt + clippy + test
-quality:
-    just gen
+# Shared checks: fmt + clippy + test
+_checks:
     cargo fmt -- --check
     cargo clippy -- -D warnings
     cargo test
+
+# Full quality gate: gen + fmt + clippy + test
+quality:
+    just gen
+    just _checks
     @echo "All checks passed"
 
 # Pre-commit checks: gen + diff guard + fmt + clippy + test
 pre-commit:
     just gen
     git diff --exit-code openapi.json || (echo "openapi.json is stale — stage it and retry" && exit 1)
-    cargo fmt -- --check
-    cargo clippy -- -D warnings
-    cargo test
+    just _checks
     @echo "All checks passed"

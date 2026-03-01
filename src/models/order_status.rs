@@ -4,6 +4,10 @@ use utoipa::ToSchema;
 
 // Outbox event-type constants — single source of truth.
 pub const ORDER_CREATED: &str = "ORDER_CREATED";
+pub const ORDER_CONFIRMED: &str = "ORDER_CONFIRMED";
+pub const ORDER_SHIPPED: &str = "ORDER_SHIPPED";
+pub const ORDER_DELIVERED: &str = "ORDER_DELIVERED";
+pub const ORDER_CANCELLED: &str = "ORDER_CANCELLED";
 pub const ORDER_UPDATED: &str = "ORDER_UPDATED";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, DbEnum, Serialize, Deserialize, ToSchema)]
@@ -26,10 +30,10 @@ impl OrderStatus {
     pub fn as_event_type(&self) -> &'static str {
         match self {
             OrderStatus::Draft => ORDER_CREATED,
-            OrderStatus::Confirmed => "ORDER_CONFIRMED",
-            OrderStatus::Shipped => "ORDER_SHIPPED",
-            OrderStatus::Delivered => "ORDER_DELIVERED",
-            OrderStatus::Cancelled => "ORDER_CANCELLED",
+            OrderStatus::Confirmed => ORDER_CONFIRMED,
+            OrderStatus::Shipped => ORDER_SHIPPED,
+            OrderStatus::Delivered => ORDER_DELIVERED,
+            OrderStatus::Cancelled => ORDER_CANCELLED,
         }
     }
 

@@ -142,6 +142,15 @@ check:
 test:
     cargo test
 
+# Generate HTML code coverage report (opens in target/llvm-cov/html/index.html)
+coverage:
+    cargo llvm-cov --html
+
+# Serve the HTML coverage report on http://localhost:8000 (Ctrl-C to stop)
+see-coverage:
+    @echo "Serving coverage report at http://localhost:8000 — press Ctrl-C to stop"
+    python3 -m http.server 8000 --directory target/llvm-cov/html
+
 # Run clippy
 lint:
     cargo clippy -- -D warnings

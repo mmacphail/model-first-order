@@ -12,6 +12,7 @@ just db-reset         # Revert all migrations + re-run
 just infra-up         # Start full infra (Postgres, Kafka, Schema Registry, Debezium, AKHQ)
 just gen              # Export openapi.json from utoipa annotations
 just smoke            # Quick manual smoke test (create order, add item, confirm)
+just coverage         # Generate HTML code coverage report (cargo-llvm-cov)
 ```
 
 ## Quality Checks (run before presenting work as done)

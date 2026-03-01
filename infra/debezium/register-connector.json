@@ -1,0 +1,28 @@
+{
+  "name": "order-outbox-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "order_api",
+    "database.password": "order_api",
+    "database.dbname": "order_api",
+    "topic.prefix": "order_api",
+    "plugin.name": "pgoutput",
+    "table.include.list": "public.commerce_order_outbox",
+    "tombstones.on.delete": "false",
+    "transforms": "outbox",
+    "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+    "transforms.outbox.table.field.event.id": "event_id",
+    "transforms.outbox.table.field.event.key": "aggregate_id",
+    "transforms.outbox.table.field.event.type": "event_type",
+    "transforms.outbox.table.field.event.payload": "event_data",
+    "transforms.outbox.route.by.field": "aggregate_type",
+    "transforms.outbox.route.topic.replacement": "public.commerce.order.c2.v1",
+    "transforms.outbox.table.fields.additional.placement": "event_id:envelope,event_type:envelope,event_date:envelope,sequence_number:envelope",
+    "transforms.outbox.table.expand.json.payload": "true",
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter": "io.confluent.connect.avro.AvroConverter",
+    "value.converter.schema.registry.url": "http://schema-registry:8081"
+  }
+}

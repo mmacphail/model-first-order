@@ -17,7 +17,7 @@ fmt:
 
 # Start Postgres via Docker Compose
 db:
-    docker compose -f infra/docker-compose.yml up -d
+    docker compose -f infra/docker-compose.yml up -d postgres
 
 # Stop Postgres
 db-stop:
@@ -25,7 +25,7 @@ db-stop:
 
 # Stop Postgres and remove volumes
 down:
-    docker compose -f infra/docker-compose.yml down -v
+    docker compose -f infra/docker-compose.yml down -v --remove-orphans
 
 # Run Diesel migrations
 migrate:
@@ -38,6 +38,36 @@ migrate-revert:
 # Reset database (revert all + re-run)
 db-reset:
     diesel database reset
+
+# ── Infrastructure ────────────────────────────────────────
+
+# Start all infrastructure services (Postgres, Kafka, Schema Registry, Debezium, AKHQ)
+infra-up:
+    docker compose -f infra/docker-compose.yml up -d
+
+# Show logs for a service (e.g. just logs kafka)
+logs service="":
+    docker compose -f infra/docker-compose.yml logs -f {{ service }}
+
+# ── Debezium ─────────────────────────────────────────────
+
+# Register the Debezium outbox connector
+register-connector:
+    curl -X POST http://localhost:8083/connectors \
+        -H "Content-Type: application/json" \
+        -d @infra/debezium/register-connector.json
+
+# Re-register the connector (delete + create)
+reload-connector:
+    -curl -s -X DELETE http://localhost:8083/connectors/order-outbox-connector
+    sleep 2
+    curl -X POST http://localhost:8083/connectors \
+        -H "Content-Type: application/json" \
+        -d @infra/debezium/register-connector.json
+
+# Check the connector status
+connector-status:
+    curl -s http://localhost:8083/connectors/order-outbox-connector/status | jq .
 
 # ── Smoke test ────────────────────────────────────────────
 
@@ -70,6 +100,16 @@ smoke:
     curl -s -X PATCH "$BASE/api/orders/$ORDER_ID/status" \
       -H 'Content-Type: application/json' \
       -d '{"status": "Confirmed"}' | jq .
+
+# ── E2E tests ────────────────────────────────────────────
+
+# Run end-to-end tests (starts and stops Docker Compose infrastructure)
+test-e2e:
+    ./scripts/run_e2e_tests.sh
+
+# Run end-to-end tests and leave infrastructure running afterwards
+test-e2e-no-teardown:
+    ./scripts/run_e2e_tests.sh --no-teardown
 
 # ── Generation boundary ───────────────────────────────────
 

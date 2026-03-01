@@ -225,7 +225,7 @@ async fn test_pagination_edge_cases() {
         .await;
     assert_eq!(resp.status(), 200);
     let body: Vec<Order> = test::read_body_json(resp).await;
-    assert!(body.len() <= 1);
+    assert_eq!(body.len(), 1);
 
     // Negative offset is clamped to 0 (does not error)
     let resp = test::TestRequest::get()
@@ -244,6 +244,15 @@ async fn test_pagination_edge_cases() {
     assert_eq!(resp.status(), 200);
     let body: Vec<Order> = test::read_body_json(resp).await;
     assert!(body.is_empty());
+
+    // Limit exceeding cap is clamped to 100 (succeeds, returns <= 100 rows)
+    let resp = test::TestRequest::get()
+        .uri("/api/orders?limit=999")
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 200);
+    let body: Vec<Order> = test::read_body_json(resp).await;
+    assert!(body.len() <= 100);
 }
 
 #[actix_web::test]

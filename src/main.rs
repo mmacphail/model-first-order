@@ -30,9 +30,19 @@ async fn main() -> std::io::Result<()> {
     info!("Starting server at http://{host}:{port}");
     info!("Swagger UI at http://{host}:{port}/swagger-ui/");
 
+    let cors_permissive = std::env::var("CORS_PERMISSIVE")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+
     HttpServer::new(move || {
+        let cors = if cors_permissive {
+            Cors::permissive()
+        } else {
+            Cors::default()
+        };
+
         App::new()
-            .wrap(Cors::permissive())
+            .wrap(cors)
             .wrap(TracingLogger::default())
             .app_data(web::Data::new(pool.clone()))
             .configure(routes::configure)

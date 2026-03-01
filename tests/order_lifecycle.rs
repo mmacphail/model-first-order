@@ -6,6 +6,7 @@ use order_api::models::order_line_item::OrderLineItem;
 use order_api::models::order_status::OrderStatus;
 use order_api::routes;
 use order_api::schema::{order_line_items, orders};
+use uuid::Uuid;
 
 fn setup_test_pool() -> DbPool {
     dotenvy::dotenv().ok();
@@ -17,6 +18,8 @@ fn setup_test_pool() -> DbPool {
     pool
 }
 
+/// Deletes all test data. Tables are deleted in FK-dependency order:
+/// order_line_items → orders (line items reference orders via FK).
 fn cleanup(pool: &DbPool) {
     let mut conn = pool.get().expect("Failed to get connection for cleanup");
     diesel::delete(order_line_items::table)
@@ -193,4 +196,82 @@ async fn test_cancellation_rules() {
         .send_request(&app)
         .await;
     assert_eq!(resp.status(), 409);
+}
+
+#[actix_web::test]
+async fn test_pagination_edge_cases() {
+    let pool = setup_test_pool();
+    cleanup(&pool);
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    // Create an order so there's at least one result
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "USD" }))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 201);
+
+    // Negative limit is clamped to 1 (returns at most 1 row)
+    let resp = test::TestRequest::get()
+        .uri("/api/orders?limit=-1")
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 200);
+    let body: Vec<Order> = test::read_body_json(resp).await;
+    assert!(body.len() <= 1);
+
+    // Negative offset is clamped to 0 (does not error)
+    let resp = test::TestRequest::get()
+        .uri("/api/orders?offset=-5")
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 200);
+    let body: Vec<Order> = test::read_body_json(resp).await;
+    assert!(!body.is_empty());
+
+    // Offset beyond result set returns empty
+    let resp = test::TestRequest::get()
+        .uri("/api/orders?offset=9999")
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 200);
+    let body: Vec<Order> = test::read_body_json(resp).await;
+    assert!(body.is_empty());
+}
+
+#[actix_web::test]
+async fn test_delete_nonexistent_line_item_returns_404() {
+    let pool = setup_test_pool();
+    cleanup(&pool);
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    // Create a draft order
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "USD" }))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 201);
+    let order: Order = test::read_body_json(resp).await;
+
+    // Attempt to delete a non-existent line item
+    let fake_item_id = Uuid::new_v4();
+    let resp = test::TestRequest::delete()
+        .uri(&format!("/api/orders/{}/items/{}", order.id, fake_item_id))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 404);
 }

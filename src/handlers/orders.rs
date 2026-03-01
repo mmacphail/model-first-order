@@ -115,8 +115,8 @@ pub async fn list_orders(
     query: web::Query<PaginationParams>,
 ) -> Result<HttpResponse, ApiError> {
     let params = query.into_inner();
-    let limit = params.limit.unwrap_or(50).min(100);
-    let offset = params.offset.unwrap_or(0);
+    let limit = params.limit.unwrap_or(50).clamp(1, 100);
+    let offset = params.offset.unwrap_or(0).max(0);
 
     let result = web::block(move || {
         let mut conn = pool.get()?;

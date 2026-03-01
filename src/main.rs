@@ -1,6 +1,5 @@
 use actix_cors::Cors;
 use actix_web::{web, App, HttpServer};
-use actix_web_prom::PrometheusMetricsBuilder;
 use tracing::info;
 use tracing_actix_web::TracingLogger;
 use utoipa::OpenApi;
@@ -42,13 +41,7 @@ async fn main() -> std::io::Result<()> {
             Cors::default()
         };
 
-        let prometheus = PrometheusMetricsBuilder::new("api")
-            .endpoint("/metrics")
-            .exclude("/metrics")
-            .exclude("/health")
-            .mask_unmatched_patterns("UNKNOWN")
-            .build()
-            .expect("Failed to initialize Prometheus metrics");
+        let prometheus = order_api::build_prometheus();
 
         App::new()
             .wrap(prometheus)

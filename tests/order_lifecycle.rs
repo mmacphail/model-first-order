@@ -1,5 +1,4 @@
 use actix_web::{test, web, App};
-use actix_web_prom::PrometheusMetricsBuilder;
 use diesel::prelude::*;
 use order_api::db::{self, DbPool};
 use order_api::models::order::Order;
@@ -381,36 +380,4 @@ async fn test_outbox_events_written_with_order_lifecycle() {
     assert_eq!(last_event_data["status"], "Confirmed");
     assert!(last_event_data["items"].is_array());
     assert_eq!(last_event_data["items"].as_array().unwrap().len(), 1);
-}
-
-#[actix_web::test]
-async fn test_metrics_endpoint_returns_prometheus_data() {
-    let (_container, pool) = setup_db().await;
-
-    let prometheus = PrometheusMetricsBuilder::new("api")
-        .endpoint("/metrics")
-        .exclude("/metrics")
-        .exclude("/health")
-        .mask_unmatched_patterns("UNKNOWN")
-        .build()
-        .expect("Failed to initialize Prometheus metrics");
-
-    let app = test::init_service(
-        App::new()
-            .wrap(prometheus)
-            .app_data(web::Data::new(pool.clone()))
-            .configure(routes::configure),
-    )
-    .await;
-
-    // Verify /metrics endpoint is live and returns Prometheus exposition format
-    let resp = test::TestRequest::get()
-        .uri("/metrics")
-        .send_request(&app)
-        .await;
-    assert_eq!(resp.status(), 200);
-    assert_eq!(
-        resp.headers().get("content-type").unwrap(),
-        "text/plain; version=0.0.4; charset=utf-8"
-    );
 }

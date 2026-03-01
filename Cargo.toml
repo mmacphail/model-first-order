@@ -31,7 +31,6 @@ utoipa-swagger-ui = { version = "7", features = ["actix-web"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 
 [dev-dependencies]
-actix-web-prom = "0.9"
 actix-rt = "2"
 tokio = { version = "1", features = ["full"] }
 testcontainers = "0.27"

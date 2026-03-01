@@ -14,6 +14,7 @@ path = "src/bin/export_openapi.rs"
 [dependencies]
 actix-cors = "0.7"
 actix-web = "4"
+actix-web-prom = "0.9"
 bigdecimal = { version = "0.4", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 diesel = { version = "2.2", features = ["postgres", "r2d2", "chrono", "uuid", "numeric", "serde_json"] }

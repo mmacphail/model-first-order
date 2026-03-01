@@ -1,5 +1,6 @@
 use actix_cors::Cors;
 use actix_web::{web, App, HttpServer};
+use actix_web_prom::PrometheusMetricsBuilder;
 use tracing::info;
 use tracing_actix_web::TracingLogger;
 use utoipa::OpenApi;
@@ -41,7 +42,15 @@ async fn main() -> std::io::Result<()> {
             Cors::default()
         };
 
+        let prometheus = PrometheusMetricsBuilder::new("api")
+            .endpoint("/metrics")
+            .exclude("/metrics")
+            .exclude("/health")
+            .build()
+            .unwrap();
+
         App::new()
+            .wrap(prometheus)
             .wrap(cors)
             .wrap(TracingLogger::default())
             .app_data(web::Data::new(pool.clone()))

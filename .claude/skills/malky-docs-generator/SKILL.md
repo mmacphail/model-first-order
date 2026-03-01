@@ -3,7 +3,7 @@ name: malky-docs-generator
 description: Generates full project documentation following the Diataxis framework (Tutorials, How-to Guides, Reference, Explanation). Reads the actual codebase and produces up to 19 markdown files in docs/ — every fact derived from real code, never generic placeholders. Use when asked to "generate docs", "create documentation", "write project docs", or "run the docs skill".
 argument-hint: (no arguments needed — reads the current project)
 disable-model-invocation: true
-allowed-tools: Read, Write, Glob, Grep, Bash
+allowed-tools: Read, Write, Glob, Grep
 ---
 
 # Diataxis Documentation Generator
@@ -13,6 +13,7 @@ Generate a complete `docs/` directory following the **Diataxis framework**. Ever
 ## Hard Rules
 
 - **Read before writing.** Complete Phase 1 fully before generating any doc.
+- **No clobber.** Before generating, check if `docs/` already exists. If it contains files, list them and ask the user to confirm before overwriting. Never silently overwrite existing documentation.
 - **No invention.** Every endpoint, type, field, env var, port, and command must come from a file you read. If you cannot find a fact, omit it.
 - **No duplication.** Do not copy README.md or CLAUDE.md content. Cross-reference them with relative links.
 - **Relative links only.** All internal links use relative paths (e.g., `../reference/domain-model.md`).

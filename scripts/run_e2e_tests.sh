@@ -68,9 +68,23 @@ done
 echo "    Debezium Connect is ready."
 
 # ── 6. Run the end-to-end tests ──────────────────────────────────────────────
+# Note: database migrations are handled inside the test binary via
+# db::run_migrations(), so there is no separate `diesel migration run` step.
 echo "==> Running E2E tests..."
-export DATABASE_URL="postgres://order_api:order_api@localhost:5432/order_api"
+export DATABASE_URL="postgres://${POSTGRES_USER:-order_api}:${POSTGRES_PASSWORD:-order_api}@localhost:5432/${POSTGRES_DB:-order_api}"
 
 cargo test --test e2e_test -- --include-ignored --nocapture
+
+# In --no-teardown mode the data volume survives; clean up replication
+# artifacts so an orphaned slot doesn't cause WAL to accumulate.
+if [[ "$TEARDOWN" != "true" ]]; then
+  echo "==> Cleaning up e2e replication slot and publication..."
+  docker compose -f infra/docker-compose.yml exec -T postgres \
+    psql -U "${POSTGRES_USER:-order_api}" -d "${POSTGRES_DB:-order_api}" \
+    -c "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = 'e2e_slot' AND NOT active;" 2>/dev/null || true
+  docker compose -f infra/docker-compose.yml exec -T postgres \
+    psql -U "${POSTGRES_USER:-order_api}" -d "${POSTGRES_DB:-order_api}" \
+    -c "DROP PUBLICATION IF EXISTS e2e_pub;" 2>/dev/null || true
+fi
 
 echo "==> E2E tests passed."

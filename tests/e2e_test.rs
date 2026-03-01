@@ -14,6 +14,7 @@
 //!     cargo test --test e2e_test -- --include-ignored --nocapture
 
 use apache_avro::types::Value as AvroValue;
+use diesel::prelude::*;
 use futures::StreamExt;
 use order_api::db;
 use order_api::routes;
@@ -22,6 +23,7 @@ use rdkafka::message::{BorrowedMessage, Message};
 use rdkafka::ClientConfig;
 use reqwest::Client;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -37,6 +39,7 @@ const KAFKA_WAIT_SECS: u64 = 60;
 async fn wait_for_http(label: &str, url: &str, timeout: Duration, interval: Duration) {
     let client = Client::builder()
         .timeout(Duration::from_secs(3))
+        .connect_timeout(Duration::from_secs(3))
         .build()
         .unwrap();
     let deadline = tokio::time::Instant::now() + timeout;
@@ -51,11 +54,31 @@ async fn wait_for_http(label: &str, url: &str, timeout: Duration, interval: Dura
     }
 }
 
+/// Parse `postgres://user:password@host:port/dbname` and return `(user, password, dbname)`.
+fn parse_database_url(url: &str) -> (String, String, String) {
+    let after_scheme = url
+        .strip_prefix("postgres://")
+        .or_else(|| url.strip_prefix("postgresql://"))
+        .expect("DATABASE_URL must start with postgres:// or postgresql://");
+    let (userinfo, rest) = after_scheme
+        .split_once('@')
+        .expect("DATABASE_URL missing '@'");
+    let (user, password) = userinfo
+        .split_once(':')
+        .expect("DATABASE_URL missing password separator ':'");
+    let dbname = rest
+        .rsplit_once('/')
+        .expect("DATABASE_URL missing '/dbname'")
+        .1;
+    (user.to_string(), password.to_string(), dbname.to_string())
+}
+
 /// Register (or replace) the Debezium outbox connector.
 ///
-/// Column mapping matches this project's `commerce_order_outbox` table:
-/// `event_id`, `event_data`, `event_date`, `sequence_number`.
-async fn register_debezium_connector(http: &Client) {
+/// Loads the base connector configuration from `infra/debezium/register-connector.json`
+/// and overrides database credentials (from `database_url`) and test-specific fields
+/// (`topic.prefix`, `slot.name`, `publication.name`) to avoid config duplication.
+async fn register_debezium_connector(http: &Client, database_url: &str) {
     // Remove any stale connector so registration is idempotent.
     let _ = http
         .delete(format!(
@@ -66,37 +89,29 @@ async fn register_debezium_connector(http: &Client) {
         .await;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    let connector_config = json!({
-        "name": "order-outbox-connector",
-        "config": {
-            "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
-            "database.hostname": "postgres",
-            "database.port": "5432",
-            "database.user": "order_api",
-            "database.password": "order_api",
-            "database.dbname": "order_api",
-            "topic.prefix": "order_api_e2e",
-            "plugin.name": "pgoutput",
-            "slot.name": "e2e_slot",
-            "publication.name": "e2e_pub",
-            "table.include.list": "public.commerce_order_outbox",
-            "tombstones.on.delete": "false",
-            "transforms": "outbox",
-            "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
-            "transforms.outbox.table.field.event.id": "event_id",
-            "transforms.outbox.table.field.event.key": "aggregate_id",
-            "transforms.outbox.table.field.event.type": "event_type",
-            "transforms.outbox.table.field.event.payload": "event_data",
-            "transforms.outbox.route.by.field": "aggregate_type",
-            "transforms.outbox.route.topic.replacement": KAFKA_TOPIC,
-            "transforms.outbox.table.fields.additional.placement":
-                "event_id:envelope,event_type:envelope,event_date:envelope,sequence_number:envelope",
-            "transforms.outbox.table.expand.json.payload": "true",
-            "key.converter": "org.apache.kafka.connect.storage.StringConverter",
-            "value.converter": "io.confluent.connect.avro.AvroConverter",
-            "value.converter.schema.registry.url": "http://schema-registry:8081"
-        }
-    });
+    // Load base config from the canonical connector JSON.
+    let config_path = format!(
+        "{}/infra/debezium/register-connector.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let base_json = std::fs::read_to_string(&config_path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", config_path, e));
+    let mut connector_config: Value = serde_json::from_str(&base_json)
+        .unwrap_or_else(|e| panic!("Failed to parse connector config: {}", e));
+
+    // Override credentials from DATABASE_URL so they aren't duplicated.
+    let (db_user, db_password, db_name) = parse_database_url(database_url);
+    let config = connector_config["config"]
+        .as_object_mut()
+        .expect("connector config missing 'config' object");
+    config.insert("database.user".to_string(), json!(db_user));
+    config.insert("database.password".to_string(), json!(db_password));
+    config.insert("database.dbname".to_string(), json!(db_name));
+
+    // Override test-specific fields so the e2e connector doesn't collide with dev.
+    config.insert("topic.prefix".to_string(), json!("order_api_e2e"));
+    config.insert("slot.name".to_string(), json!("e2e_slot"));
+    config.insert("publication.name".to_string(), json!("e2e_pub"));
 
     let resp = http
         .post(format!("{}/connectors", DEBEZIUM_URL))
@@ -111,6 +126,27 @@ async fn register_debezium_connector(http: &Client) {
         resp.status(),
         resp.text().await.unwrap_or_default()
     );
+}
+
+/// Drop the e2e replication slot and publication if they exist.
+///
+/// Called at the start and end of the test to prevent WAL accumulation from
+/// orphaned slots (e.g. after a previous test run that panicked).
+fn cleanup_replication_artifacts(pool: &db::DbPool) {
+    let mut conn = pool
+        .get()
+        .expect("Failed to get DB connection for replication cleanup");
+
+    // Drop the replication slot (only if inactive — active slots cannot be dropped).
+    let _ = diesel::sql_query(
+        "SELECT pg_drop_replication_slot(slot_name) \
+         FROM pg_replication_slots \
+         WHERE slot_name = 'e2e_slot' AND NOT active",
+    )
+    .execute(&mut conn);
+
+    // Drop the publication unconditionally.
+    let _ = diesel::sql_query("DROP PUBLICATION IF EXISTS e2e_pub").execute(&mut conn);
 }
 
 /// Poll the Debezium connector status until both the connector and its task
@@ -184,10 +220,16 @@ async fn test_order_event_reaches_kafka() {
     let pool = db::init_pool(&database_url);
     db::run_migrations(&pool);
 
-    let server = actix_web::HttpServer::new(move || {
-        actix_web::App::new()
-            .app_data(actix_web::web::Data::new(pool.clone()))
-            .configure(routes::configure)
+    // Clean up any leftover replication artifacts from a previous run.
+    cleanup_replication_artifacts(&pool);
+
+    let server = actix_web::HttpServer::new({
+        let pool = pool.clone();
+        move || {
+            actix_web::App::new()
+                .app_data(actix_web::web::Data::new(pool.clone()))
+                .configure(routes::configure)
+        }
     })
     .bind(("127.0.0.1", APP_PORT))
     .expect("Failed to bind the order-api service")
@@ -224,7 +266,7 @@ async fn test_order_event_reaches_kafka() {
     )
     .await;
 
-    register_debezium_connector(&http).await;
+    register_debezium_connector(&http, &database_url).await;
     wait_for_connector_running(&http).await;
 
     // ── 3. Create a Kafka consumer ──────────────────────────────────────────
@@ -299,6 +341,7 @@ async fn test_order_event_reaches_kafka() {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(KAFKA_WAIT_SECS);
     let mut kafka_stream = consumer.stream();
     let mut found = false;
+    let mut schema_cache: HashMap<u32, apache_avro::Schema> = HashMap::new();
 
     loop {
         if tokio::time::Instant::now() > deadline {
@@ -320,7 +363,7 @@ async fn test_order_event_reaches_kafka() {
             None => continue,
         };
 
-        let record = match decode_avro_record(raw_bytes, &http).await {
+        let record = match decode_avro_record(raw_bytes, &http, &mut schema_cache).await {
             Some(r) => r,
             None => {
                 eprintln!("Failed to decode Avro record ({} bytes)", raw_bytes.len());
@@ -424,6 +467,11 @@ async fn test_order_event_reaches_kafka() {
         break;
     }
 
+    // Clean up replication artifacts before asserting, so they're removed even
+    // if a previous run left them behind. If this assertion panics, the cleanup
+    // at the start of the next run will handle it.
+    cleanup_replication_artifacts(&pool);
+
     assert!(
         found,
         "ORDER_CONFIRMED event for order '{}' was not received on Kafka topic '{}' within {} s",
@@ -436,10 +484,13 @@ async fn test_order_event_reaches_kafka() {
 /// Decode an Avro-encoded record from the Confluent wire format.
 ///
 /// Wire format: magic byte (0x00) + 4-byte big-endian schema ID + Avro binary.
+///
+/// Schemas are cached by ID to avoid redundant Schema Registry lookups.
 async fn decode_avro_record(
     bytes: &[u8],
     http: &Client,
-) -> Option<std::collections::HashMap<String, AvroValue>> {
+    schema_cache: &mut HashMap<u32, apache_avro::Schema>,
+) -> Option<HashMap<String, AvroValue>> {
     if bytes.len() < 5 || bytes[0] != 0x00 {
         return None;
     }
@@ -447,11 +498,17 @@ async fn decode_avro_record(
     let schema_id = u32::from_be_bytes(bytes[1..5].try_into().ok()?);
     let avro_bytes = &bytes[5..];
 
-    let schema_url = format!("{}/schemas/ids/{}", SCHEMA_REGISTRY_URL, schema_id);
-    let schema_resp: Value = http.get(&schema_url).send().await.ok()?.json().await.ok()?;
-    let schema_str = schema_resp["schema"].as_str()?;
-
-    let schema = apache_avro::Schema::parse_str(schema_str).ok()?;
+    let schema = match schema_cache.get(&schema_id) {
+        Some(s) => s.clone(),
+        None => {
+            let schema_url = format!("{}/schemas/ids/{}", SCHEMA_REGISTRY_URL, schema_id);
+            let schema_resp: Value = http.get(&schema_url).send().await.ok()?.json().await.ok()?;
+            let schema_str = schema_resp["schema"].as_str()?;
+            let schema = apache_avro::Schema::parse_str(schema_str).ok()?;
+            schema_cache.insert(schema_id, schema.clone());
+            schema
+        }
+    };
 
     let value =
         apache_avro::from_avro_datum(&schema, &mut avro_bytes.to_vec().as_slice(), None).ok()?;

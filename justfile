@@ -51,19 +51,33 @@ logs service="":
 
 # ── Debezium ─────────────────────────────────────────────
 
-# Register the Debezium outbox connector
+# Register the Debezium outbox connector (credentials from env / .env)
 register-connector:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    jq --arg user "${POSTGRES_USER:-order_api}" \
+       --arg pass "${POSTGRES_PASSWORD:-order_api}" \
+       --arg db   "${POSTGRES_DB:-order_api}" \
+       '.config["database.user"] = $user | .config["database.password"] = $pass | .config["database.dbname"] = $db' \
+       infra/debezium/register-connector.json | \
     curl -X POST http://localhost:8083/connectors \
         -H "Content-Type: application/json" \
-        -d @infra/debezium/register-connector.json
+        -d @-
 
 # Re-register the connector (delete + create)
 reload-connector:
-    -curl -s -X DELETE http://localhost:8083/connectors/order-outbox-connector
+    #!/usr/bin/env bash
+    set -euo pipefail
+    curl -s -X DELETE http://localhost:8083/connectors/order-outbox-connector || true
     sleep 2
+    jq --arg user "${POSTGRES_USER:-order_api}" \
+       --arg pass "${POSTGRES_PASSWORD:-order_api}" \
+       --arg db   "${POSTGRES_DB:-order_api}" \
+       '.config["database.user"] = $user | .config["database.password"] = $pass | .config["database.dbname"] = $db' \
+       infra/debezium/register-connector.json | \
     curl -X POST http://localhost:8083/connectors \
         -H "Content-Type: application/json" \
-        -d @infra/debezium/register-connector.json
+        -d @-
 
 # Check the connector status
 connector-status:

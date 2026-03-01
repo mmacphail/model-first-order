@@ -3,9 +3,9 @@ services:
     image: debezium/postgres:16
     container_name: order-api-db
     environment:
-      POSTGRES_USER: order_api
-      POSTGRES_PASSWORD: order_api
-      POSTGRES_DB: order_api
+      POSTGRES_USER: ${POSTGRES_USER:-order_api}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-order_api}
+      POSTGRES_DB: ${POSTGRES_DB:-order_api}
     ports:
       - "5432:5432"
     volumes:

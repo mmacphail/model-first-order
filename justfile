@@ -146,9 +146,13 @@ test:
 lint:
     cargo clippy -- -D warnings
 
-# Pre-commit checks: fmt + clippy + test
-pre-commit:
+# Full quality gate: gen + fmt + clippy + test
+quality:
+    just gen
     cargo fmt -- --check
     cargo clippy -- -D warnings
     cargo test
     @echo "All checks passed"
+
+# Pre-commit checks: fmt + clippy + test
+pre-commit: quality

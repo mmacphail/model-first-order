@@ -17,10 +17,7 @@ just smoke            # Quick manual smoke test (create order, add item, confirm
 ## Quality Checks (run before presenting work as done)
 
 ```bash
-cargo fmt -- --check  # Check formatting (fix with: cargo fmt)
-cargo clippy -- -D warnings
-cargo test            # Integration tests use testcontainers (needs Docker)
-just pre-commit       # All three in sequence
+just quality          # Full gate: gen + fmt check + clippy + test
 ```
 
 Run a single test: `cargo test test_order_lifecycle`

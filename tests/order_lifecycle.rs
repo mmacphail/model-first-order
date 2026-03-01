@@ -174,7 +174,7 @@ async fn test_cancellation_rules() {
     let order: Order = test::read_body_json(resp).await;
 
     // Add item so total matches
-    test::TestRequest::post()
+    let resp = test::TestRequest::post()
         .uri(&format!("/api/orders/{}/items", order.id))
         .set_json(serde_json::json!({
             "product_sku": "WIDGET-001",
@@ -183,20 +183,23 @@ async fn test_cancellation_rules() {
         }))
         .send_request(&app)
         .await;
+    assert_eq!(resp.status(), 201);
 
     // Confirm
-    test::TestRequest::patch()
+    let resp = test::TestRequest::patch()
         .uri(&format!("/api/orders/{}/status", order.id))
         .set_json(serde_json::json!({ "status": "Confirmed" }))
         .send_request(&app)
         .await;
+    assert_eq!(resp.status(), 200);
 
     // Ship
-    test::TestRequest::patch()
+    let resp = test::TestRequest::patch()
         .uri(&format!("/api/orders/{}/status", order.id))
         .set_json(serde_json::json!({ "status": "Shipped" }))
         .send_request(&app)
         .await;
+    assert_eq!(resp.status(), 200);
 
     // Cannot cancel shipped order (edge case from spec)
     let resp = test::TestRequest::patch()
@@ -685,6 +688,54 @@ async fn test_add_line_item_to_nonexistent_order_returns_404() {
 }
 
 #[actix_web::test]
+async fn test_add_line_item_to_confirmed_order_returns_409() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "USD" }))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 201);
+    let order: Order = test::read_body_json(resp).await;
+
+    let resp = test::TestRequest::post()
+        .uri(&format!("/api/orders/{}/items", order.id))
+        .set_json(serde_json::json!({
+            "product_sku": "SKU-001",
+            "quantity": 1,
+            "unit_price": "10.0000"
+        }))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 201);
+
+    let resp = test::TestRequest::patch()
+        .uri(&format!("/api/orders/{}/status", order.id))
+        .set_json(serde_json::json!({ "status": "Confirmed" }))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 200);
+
+    let resp = test::TestRequest::post()
+        .uri(&format!("/api/orders/{}/items", order.id))
+        .set_json(serde_json::json!({
+            "product_sku": "SKU-NEW",
+            "quantity": 1,
+            "unit_price": "5.00"
+        }))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 409);
+}
+
+#[actix_web::test]
 async fn test_add_line_item_to_shipped_order_returns_409() {
     let (_container, pool) = setup_db().await;
     let app = test::init_service(
@@ -701,7 +752,7 @@ async fn test_add_line_item_to_shipped_order_returns_409() {
         .await;
     let order: Order = test::read_body_json(resp).await;
 
-    test::TestRequest::post()
+    let resp = test::TestRequest::post()
         .uri(&format!("/api/orders/{}/items", order.id))
         .set_json(serde_json::json!({
             "product_sku": "SKU-001",
@@ -710,18 +761,21 @@ async fn test_add_line_item_to_shipped_order_returns_409() {
         }))
         .send_request(&app)
         .await;
+    assert_eq!(resp.status(), 201);
 
-    test::TestRequest::patch()
+    let resp = test::TestRequest::patch()
         .uri(&format!("/api/orders/{}/status", order.id))
         .set_json(serde_json::json!({ "status": "Confirmed" }))
         .send_request(&app)
         .await;
+    assert_eq!(resp.status(), 200);
 
-    test::TestRequest::patch()
+    let resp = test::TestRequest::patch()
         .uri(&format!("/api/orders/{}/status", order.id))
         .set_json(serde_json::json!({ "status": "Shipped" }))
         .send_request(&app)
         .await;
+    assert_eq!(resp.status(), 200);
 
     let resp = test::TestRequest::post()
         .uri(&format!("/api/orders/{}/items", order.id))
@@ -752,11 +806,12 @@ async fn test_add_line_item_to_cancelled_order_returns_409() {
         .await;
     let order: Order = test::read_body_json(resp).await;
 
-    test::TestRequest::patch()
+    let resp = test::TestRequest::patch()
         .uri(&format!("/api/orders/{}/status", order.id))
         .set_json(serde_json::json!({ "status": "Cancelled" }))
         .send_request(&app)
         .await;
+    assert_eq!(resp.status(), 200);
 
     let resp = test::TestRequest::post()
         .uri(&format!("/api/orders/{}/items", order.id))
@@ -884,7 +939,7 @@ async fn test_cancel_from_confirmed_succeeds() {
         .await;
     let order: Order = test::read_body_json(resp).await;
 
-    test::TestRequest::post()
+    let resp = test::TestRequest::post()
         .uri(&format!("/api/orders/{}/items", order.id))
         .set_json(serde_json::json!({
             "product_sku": "SKU-001",
@@ -893,12 +948,14 @@ async fn test_cancel_from_confirmed_succeeds() {
         }))
         .send_request(&app)
         .await;
+    assert_eq!(resp.status(), 201);
 
-    test::TestRequest::patch()
+    let resp = test::TestRequest::patch()
         .uri(&format!("/api/orders/{}/status", order.id))
         .set_json(serde_json::json!({ "status": "Confirmed" }))
         .send_request(&app)
         .await;
+    assert_eq!(resp.status(), 200);
 
     let resp = test::TestRequest::patch()
         .uri(&format!("/api/orders/{}/status", order.id))
@@ -927,7 +984,7 @@ async fn test_ship_to_delivered_succeeds() {
         .await;
     let order: Order = test::read_body_json(resp).await;
 
-    test::TestRequest::post()
+    let resp = test::TestRequest::post()
         .uri(&format!("/api/orders/{}/items", order.id))
         .set_json(serde_json::json!({
             "product_sku": "SKU-001",
@@ -936,18 +993,21 @@ async fn test_ship_to_delivered_succeeds() {
         }))
         .send_request(&app)
         .await;
+    assert_eq!(resp.status(), 201);
 
-    test::TestRequest::patch()
+    let resp = test::TestRequest::patch()
         .uri(&format!("/api/orders/{}/status", order.id))
         .set_json(serde_json::json!({ "status": "Confirmed" }))
         .send_request(&app)
         .await;
+    assert_eq!(resp.status(), 200);
 
-    test::TestRequest::patch()
+    let resp = test::TestRequest::patch()
         .uri(&format!("/api/orders/{}/status", order.id))
         .set_json(serde_json::json!({ "status": "Shipped" }))
         .send_request(&app)
         .await;
+    assert_eq!(resp.status(), 200);
 
     let resp = test::TestRequest::patch()
         .uri(&format!("/api/orders/{}/status", order.id))
@@ -976,7 +1036,7 @@ async fn test_transition_from_delivered_returns_409() {
         .await;
     let order: Order = test::read_body_json(resp).await;
 
-    test::TestRequest::post()
+    let resp = test::TestRequest::post()
         .uri(&format!("/api/orders/{}/items", order.id))
         .set_json(serde_json::json!({
             "product_sku": "SKU-001",
@@ -985,24 +1045,28 @@ async fn test_transition_from_delivered_returns_409() {
         }))
         .send_request(&app)
         .await;
+    assert_eq!(resp.status(), 201);
 
-    test::TestRequest::patch()
+    let resp = test::TestRequest::patch()
         .uri(&format!("/api/orders/{}/status", order.id))
         .set_json(serde_json::json!({ "status": "Confirmed" }))
         .send_request(&app)
         .await;
+    assert_eq!(resp.status(), 200);
 
-    test::TestRequest::patch()
+    let resp = test::TestRequest::patch()
         .uri(&format!("/api/orders/{}/status", order.id))
         .set_json(serde_json::json!({ "status": "Shipped" }))
         .send_request(&app)
         .await;
+    assert_eq!(resp.status(), 200);
 
-    test::TestRequest::patch()
+    let resp = test::TestRequest::patch()
         .uri(&format!("/api/orders/{}/status", order.id))
         .set_json(serde_json::json!({ "status": "Delivered" }))
         .send_request(&app)
         .await;
+    assert_eq!(resp.status(), 200);
 
     // Delivered is terminal
     let resp = test::TestRequest::patch()
@@ -1030,11 +1094,12 @@ async fn test_outbox_event_contains_order_cancelled_event_type() {
         .await;
     let order: Order = test::read_body_json(resp).await;
 
-    test::TestRequest::patch()
+    let resp = test::TestRequest::patch()
         .uri(&format!("/api/orders/{}/status", order.id))
         .set_json(serde_json::json!({ "status": "Cancelled" }))
         .send_request(&app)
         .await;
+    assert_eq!(resp.status(), 200);
 
     let mut conn = pool.get().expect("Failed to get connection");
     let events: Vec<OutboxEvent> = commerce_order_outbox::table
@@ -1133,11 +1198,12 @@ async fn test_delete_item_from_confirmed_order_returns_409() {
         .await;
     let item: OrderLineItem = test::read_body_json(resp).await;
 
-    test::TestRequest::patch()
+    let resp = test::TestRequest::patch()
         .uri(&format!("/api/orders/{}/status", order.id))
         .set_json(serde_json::json!({ "status": "Confirmed" }))
         .send_request(&app)
         .await;
+    assert_eq!(resp.status(), 200);
 
     let resp = test::TestRequest::delete()
         .uri(&format!("/api/orders/{}/items/{}", order.id, item.id))

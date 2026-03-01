@@ -98,6 +98,19 @@ mod tests {
         assert!(matches!(api_err, ApiError::Internal(_)));
     }
 
+    // ── From<BlockingError> ─────────────────────────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_from_blocking_error_maps_to_api_internal() {
+        let result = actix_web::web::block(|| {
+            panic!("intentional panic to produce BlockingError");
+        })
+        .await;
+        let blocking_err = result.unwrap_err();
+        let api_err = ApiError::from(blocking_err);
+        assert!(matches!(api_err, ApiError::Internal(_)));
+    }
+
     // ── ResponseError — HTTP status codes ─────────────────────────────────────
 
     #[test]

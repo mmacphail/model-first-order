@@ -2,3 +2,6 @@
 .env
 lcov.info
 coverage-html/
+
+# Ephemeral inter-agent coordination (not committed)
+.claude/scratchpad/

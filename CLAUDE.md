@@ -72,3 +72,29 @@ E2E CDC tests (`tests/e2e_test.rs`, run via `just test-e2e`) start the full Dock
 - Don't edit `openapi.json` — it's overwritten by `just gen`
 - Don't write handlers before migration + model (won't compile)
 - Run `just gen` after any model/handler change
+
+## Multi-Agent / Parallel Development
+
+When multiple Claude Code agents work on this codebase simultaneously, follow the guide at **`.claude/MULTI_AGENT.md`**. Key points:
+
+- **Always use a worktree** for code modifications. Each agent gets its own checkout and `target/` directory.
+- **Respect module boundaries.** Shared files (`src/routes.rs`, `src/lib.rs`, `src/*/mod.rs`, `Cargo.toml`) should only be touched by one agent at a time.
+- **Migrations are sequential.** Only one agent should create and run migrations at a time.
+- **Tests are isolated.** `cargo test` uses testcontainers with random ports -- safe to run in parallel. `just test-e2e` uses fixed Docker ports -- NOT safe in parallel.
+- **Branch naming:** `<type>/<short-description>` (e.g., `feat/add-product-aggregate`).
+- **Scratchpad:** Agents coordinate via `.claude/scratchpad/` (gitignored, ephemeral).
+
+See also:
+- `.claude/rules/parallel-safety.md` -- rules preventing agents from stepping on each other
+- `.claude/rules/pipeline-order.md` -- enforcing the model-first pipeline
+- `.claude/rules/worktree-conventions.md` -- branch and worktree naming standards
+
+### Available Specialized Agents
+
+| Agent | Purpose |
+|---|---|
+| `task-planner` | Decomposes large tasks into parallelizable subtasks |
+| `migration-writer` | Creates migrations and model skeletons (Phase 1 sequential work) |
+| `pre-merge-validator` | Validates a branch is ready to merge (quality + convention checks) |
+| `test-completeness-checker` | Audits test coverage and fills gaps |
+| `diataxis-docs-generator` | Generates Diataxis-style documentation |

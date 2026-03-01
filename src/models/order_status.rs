@@ -50,3 +50,132 @@ impl OrderStatus {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── as_event_type ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_as_event_type_draft_returns_order_created() {
+        assert_eq!(OrderStatus::Draft.as_event_type(), ORDER_CREATED);
+    }
+
+    #[test]
+    fn test_as_event_type_confirmed_returns_order_confirmed() {
+        assert_eq!(OrderStatus::Confirmed.as_event_type(), ORDER_CONFIRMED);
+    }
+
+    #[test]
+    fn test_as_event_type_shipped_returns_order_shipped() {
+        assert_eq!(OrderStatus::Shipped.as_event_type(), ORDER_SHIPPED);
+    }
+
+    #[test]
+    fn test_as_event_type_delivered_returns_order_delivered() {
+        assert_eq!(OrderStatus::Delivered.as_event_type(), ORDER_DELIVERED);
+    }
+
+    #[test]
+    fn test_as_event_type_cancelled_returns_order_cancelled() {
+        assert_eq!(OrderStatus::Cancelled.as_event_type(), ORDER_CANCELLED);
+    }
+
+    // ── can_transition_to — valid transitions ──────────────────────────────────
+
+    #[test]
+    fn test_transition_draft_to_confirmed_is_allowed() {
+        assert!(OrderStatus::Draft.can_transition_to(OrderStatus::Confirmed));
+    }
+
+    #[test]
+    fn test_transition_draft_to_cancelled_is_allowed() {
+        assert!(OrderStatus::Draft.can_transition_to(OrderStatus::Cancelled));
+    }
+
+    #[test]
+    fn test_transition_confirmed_to_shipped_is_allowed() {
+        assert!(OrderStatus::Confirmed.can_transition_to(OrderStatus::Shipped));
+    }
+
+    #[test]
+    fn test_transition_confirmed_to_cancelled_is_allowed() {
+        assert!(OrderStatus::Confirmed.can_transition_to(OrderStatus::Cancelled));
+    }
+
+    #[test]
+    fn test_transition_shipped_to_delivered_is_allowed() {
+        assert!(OrderStatus::Shipped.can_transition_to(OrderStatus::Delivered));
+    }
+
+    // ── can_transition_to — invalid / backward transitions ────────────────────
+
+    #[test]
+    fn test_transition_draft_to_shipped_is_rejected() {
+        assert!(!OrderStatus::Draft.can_transition_to(OrderStatus::Shipped));
+    }
+
+    #[test]
+    fn test_transition_draft_to_delivered_is_rejected() {
+        assert!(!OrderStatus::Draft.can_transition_to(OrderStatus::Delivered));
+    }
+
+    #[test]
+    fn test_transition_draft_to_draft_is_rejected() {
+        assert!(!OrderStatus::Draft.can_transition_to(OrderStatus::Draft));
+    }
+
+    #[test]
+    fn test_transition_confirmed_to_draft_is_rejected() {
+        assert!(!OrderStatus::Confirmed.can_transition_to(OrderStatus::Draft));
+    }
+
+    #[test]
+    fn test_transition_confirmed_to_confirmed_is_rejected() {
+        assert!(!OrderStatus::Confirmed.can_transition_to(OrderStatus::Confirmed));
+    }
+
+    #[test]
+    fn test_transition_confirmed_to_delivered_is_rejected() {
+        assert!(!OrderStatus::Confirmed.can_transition_to(OrderStatus::Delivered));
+    }
+
+    #[test]
+    fn test_transition_shipped_to_draft_is_rejected() {
+        assert!(!OrderStatus::Shipped.can_transition_to(OrderStatus::Draft));
+    }
+
+    #[test]
+    fn test_transition_shipped_to_confirmed_is_rejected() {
+        assert!(!OrderStatus::Shipped.can_transition_to(OrderStatus::Confirmed));
+    }
+
+    #[test]
+    fn test_transition_shipped_to_cancelled_is_rejected() {
+        assert!(!OrderStatus::Shipped.can_transition_to(OrderStatus::Cancelled));
+    }
+
+    #[test]
+    fn test_transition_shipped_to_shipped_is_rejected() {
+        assert!(!OrderStatus::Shipped.can_transition_to(OrderStatus::Shipped));
+    }
+
+    #[test]
+    fn test_transition_delivered_to_any_is_rejected() {
+        assert!(!OrderStatus::Delivered.can_transition_to(OrderStatus::Draft));
+        assert!(!OrderStatus::Delivered.can_transition_to(OrderStatus::Confirmed));
+        assert!(!OrderStatus::Delivered.can_transition_to(OrderStatus::Shipped));
+        assert!(!OrderStatus::Delivered.can_transition_to(OrderStatus::Delivered));
+        assert!(!OrderStatus::Delivered.can_transition_to(OrderStatus::Cancelled));
+    }
+
+    #[test]
+    fn test_transition_cancelled_to_any_is_rejected() {
+        assert!(!OrderStatus::Cancelled.can_transition_to(OrderStatus::Draft));
+        assert!(!OrderStatus::Cancelled.can_transition_to(OrderStatus::Confirmed));
+        assert!(!OrderStatus::Cancelled.can_transition_to(OrderStatus::Shipped));
+        assert!(!OrderStatus::Cancelled.can_transition_to(OrderStatus::Delivered));
+        assert!(!OrderStatus::Cancelled.can_transition_to(OrderStatus::Cancelled));
+    }
+}

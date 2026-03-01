@@ -384,6 +384,8 @@ async fn test_outbox_events_written_with_order_lifecycle() {
     assert_eq!(last_event_data["items"].as_array().unwrap().len(), 1);
 }
 
+// ── health check ───────────────────────────────────────────────────────────
+
 #[actix_web::test]
 async fn test_health_check_returns_database_ok() {
     let (_container, pool) = setup_db().await;
@@ -432,4 +434,757 @@ async fn test_health_check_returns_degraded_when_db_unreachable() {
     assert_eq!(body["status"], "degraded");
     assert_eq!(body["database"], "error");
     assert_eq!(body["detail"], "database unreachable");
+}
+
+// ── create_order — validation ──────────────────────────────────────────────
+
+#[actix_web::test]
+async fn test_create_order_with_lowercase_currency_returns_400() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "eur" }))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 400);
+}
+
+#[actix_web::test]
+async fn test_create_order_with_too_short_currency_returns_400() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "US" }))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 400);
+}
+
+#[actix_web::test]
+async fn test_create_order_with_too_long_currency_returns_400() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "EURO" }))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 400);
+}
+
+#[actix_web::test]
+async fn test_create_order_with_digit_in_currency_returns_400() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "U5D" }))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 400);
+}
+
+#[actix_web::test]
+async fn test_new_order_has_zero_total_and_null_confirmed_at() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "USD" }))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 201);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["total_amount"], "0");
+    assert!(body["confirmed_at"].is_null());
+    assert_eq!(body["status"], "Draft");
+}
+
+// ── get_order ──────────────────────────────────────────────────────────────
+
+#[actix_web::test]
+async fn test_get_order_not_found_returns_404() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let nonexistent_id = Uuid::new_v4();
+    let resp = test::TestRequest::get()
+        .uri(&format!("/api/orders/{nonexistent_id}"))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 404);
+}
+
+#[actix_web::test]
+async fn test_get_order_returns_items_array() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "GBP" }))
+        .send_request(&app)
+        .await;
+    let order: Order = test::read_body_json(resp).await;
+
+    let resp = test::TestRequest::get()
+        .uri(&format!("/api/orders/{}", order.id))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["id"], order.id.to_string());
+    assert!(body["items"].is_array());
+    assert_eq!(body["items"].as_array().unwrap().len(), 0);
+}
+
+// ── list_orders ────────────────────────────────────────────────────────────
+
+#[actix_web::test]
+async fn test_list_orders_empty_database_returns_empty_array() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::get()
+        .uri("/api/orders")
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 200);
+    let body: Vec<serde_json::Value> = test::read_body_json(resp).await;
+    assert!(body.is_empty());
+}
+
+// ── add_line_item — validation ─────────────────────────────────────────────
+
+#[actix_web::test]
+async fn test_add_line_item_zero_quantity_returns_400() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "USD" }))
+        .send_request(&app)
+        .await;
+    let order: Order = test::read_body_json(resp).await;
+
+    let resp = test::TestRequest::post()
+        .uri(&format!("/api/orders/{}/items", order.id))
+        .set_json(serde_json::json!({
+            "product_sku": "SKU-001",
+            "quantity": 0,
+            "unit_price": "10.00"
+        }))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 400);
+}
+
+#[actix_web::test]
+async fn test_add_line_item_negative_quantity_returns_400() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "USD" }))
+        .send_request(&app)
+        .await;
+    let order: Order = test::read_body_json(resp).await;
+
+    let resp = test::TestRequest::post()
+        .uri(&format!("/api/orders/{}/items", order.id))
+        .set_json(serde_json::json!({
+            "product_sku": "SKU-001",
+            "quantity": -5,
+            "unit_price": "10.00"
+        }))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 400);
+}
+
+#[actix_web::test]
+async fn test_add_line_item_to_nonexistent_order_returns_404() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let nonexistent_id = Uuid::new_v4();
+    let resp = test::TestRequest::post()
+        .uri(&format!("/api/orders/{nonexistent_id}/items"))
+        .set_json(serde_json::json!({
+            "product_sku": "SKU-001",
+            "quantity": 1,
+            "unit_price": "10.00"
+        }))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 404);
+}
+
+#[actix_web::test]
+async fn test_add_line_item_to_shipped_order_returns_409() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "USD" }))
+        .send_request(&app)
+        .await;
+    let order: Order = test::read_body_json(resp).await;
+
+    test::TestRequest::post()
+        .uri(&format!("/api/orders/{}/items", order.id))
+        .set_json(serde_json::json!({
+            "product_sku": "SKU-001",
+            "quantity": 1,
+            "unit_price": "10.0000"
+        }))
+        .send_request(&app)
+        .await;
+
+    test::TestRequest::patch()
+        .uri(&format!("/api/orders/{}/status", order.id))
+        .set_json(serde_json::json!({ "status": "Confirmed" }))
+        .send_request(&app)
+        .await;
+
+    test::TestRequest::patch()
+        .uri(&format!("/api/orders/{}/status", order.id))
+        .set_json(serde_json::json!({ "status": "Shipped" }))
+        .send_request(&app)
+        .await;
+
+    let resp = test::TestRequest::post()
+        .uri(&format!("/api/orders/{}/items", order.id))
+        .set_json(serde_json::json!({
+            "product_sku": "SKU-NEW",
+            "quantity": 1,
+            "unit_price": "5.00"
+        }))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 409);
+}
+
+#[actix_web::test]
+async fn test_add_line_item_to_cancelled_order_returns_409() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "USD" }))
+        .send_request(&app)
+        .await;
+    let order: Order = test::read_body_json(resp).await;
+
+    test::TestRequest::patch()
+        .uri(&format!("/api/orders/{}/status", order.id))
+        .set_json(serde_json::json!({ "status": "Cancelled" }))
+        .send_request(&app)
+        .await;
+
+    let resp = test::TestRequest::post()
+        .uri(&format!("/api/orders/{}/items", order.id))
+        .set_json(serde_json::json!({
+            "product_sku": "SKU-001",
+            "quantity": 1,
+            "unit_price": "10.00"
+        }))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 409);
+}
+
+#[actix_web::test]
+async fn test_add_multiple_items_total_amount_is_sum_of_line_totals() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "USD" }))
+        .send_request(&app)
+        .await;
+    let order: Order = test::read_body_json(resp).await;
+
+    // Item 1: 2 x 10.00 = 20.00
+    test::TestRequest::post()
+        .uri(&format!("/api/orders/{}/items", order.id))
+        .set_json(serde_json::json!({
+            "product_sku": "SKU-A",
+            "quantity": 2,
+            "unit_price": "10.0000"
+        }))
+        .send_request(&app)
+        .await;
+
+    // Item 2: 3 x 5.00 = 15.00
+    test::TestRequest::post()
+        .uri(&format!("/api/orders/{}/items", order.id))
+        .set_json(serde_json::json!({
+            "product_sku": "SKU-B",
+            "quantity": 3,
+            "unit_price": "5.0000"
+        }))
+        .send_request(&app)
+        .await;
+
+    // total_amount should be 20.00 + 15.00 = 35.00
+    let resp = test::TestRequest::get()
+        .uri(&format!("/api/orders/{}", order.id))
+        .send_request(&app)
+        .await;
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["total_amount"], "35.0000");
+    assert_eq!(body["items"].as_array().unwrap().len(), 2);
+}
+
+// ── transition_status ──────────────────────────────────────────────────────
+
+#[actix_web::test]
+async fn test_transition_nonexistent_order_returns_404() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let nonexistent_id = Uuid::new_v4();
+    let resp = test::TestRequest::patch()
+        .uri(&format!("/api/orders/{nonexistent_id}/status"))
+        .set_json(serde_json::json!({ "status": "Confirmed" }))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 404);
+}
+
+#[actix_web::test]
+async fn test_cancel_from_draft_succeeds() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "USD" }))
+        .send_request(&app)
+        .await;
+    let order: Order = test::read_body_json(resp).await;
+
+    let resp = test::TestRequest::patch()
+        .uri(&format!("/api/orders/{}/status", order.id))
+        .set_json(serde_json::json!({ "status": "Cancelled" }))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 200);
+    let body: Order = test::read_body_json(resp).await;
+    assert_eq!(body.status, OrderStatus::Cancelled);
+}
+
+#[actix_web::test]
+async fn test_cancel_from_confirmed_succeeds() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "USD" }))
+        .send_request(&app)
+        .await;
+    let order: Order = test::read_body_json(resp).await;
+
+    test::TestRequest::post()
+        .uri(&format!("/api/orders/{}/items", order.id))
+        .set_json(serde_json::json!({
+            "product_sku": "SKU-001",
+            "quantity": 1,
+            "unit_price": "10.0000"
+        }))
+        .send_request(&app)
+        .await;
+
+    test::TestRequest::patch()
+        .uri(&format!("/api/orders/{}/status", order.id))
+        .set_json(serde_json::json!({ "status": "Confirmed" }))
+        .send_request(&app)
+        .await;
+
+    let resp = test::TestRequest::patch()
+        .uri(&format!("/api/orders/{}/status", order.id))
+        .set_json(serde_json::json!({ "status": "Cancelled" }))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 200);
+    let body: Order = test::read_body_json(resp).await;
+    assert_eq!(body.status, OrderStatus::Cancelled);
+}
+
+#[actix_web::test]
+async fn test_ship_to_delivered_succeeds() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "USD" }))
+        .send_request(&app)
+        .await;
+    let order: Order = test::read_body_json(resp).await;
+
+    test::TestRequest::post()
+        .uri(&format!("/api/orders/{}/items", order.id))
+        .set_json(serde_json::json!({
+            "product_sku": "SKU-001",
+            "quantity": 1,
+            "unit_price": "10.0000"
+        }))
+        .send_request(&app)
+        .await;
+
+    test::TestRequest::patch()
+        .uri(&format!("/api/orders/{}/status", order.id))
+        .set_json(serde_json::json!({ "status": "Confirmed" }))
+        .send_request(&app)
+        .await;
+
+    test::TestRequest::patch()
+        .uri(&format!("/api/orders/{}/status", order.id))
+        .set_json(serde_json::json!({ "status": "Shipped" }))
+        .send_request(&app)
+        .await;
+
+    let resp = test::TestRequest::patch()
+        .uri(&format!("/api/orders/{}/status", order.id))
+        .set_json(serde_json::json!({ "status": "Delivered" }))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 200);
+    let body: Order = test::read_body_json(resp).await;
+    assert_eq!(body.status, OrderStatus::Delivered);
+}
+
+#[actix_web::test]
+async fn test_transition_from_delivered_returns_409() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "USD" }))
+        .send_request(&app)
+        .await;
+    let order: Order = test::read_body_json(resp).await;
+
+    test::TestRequest::post()
+        .uri(&format!("/api/orders/{}/items", order.id))
+        .set_json(serde_json::json!({
+            "product_sku": "SKU-001",
+            "quantity": 1,
+            "unit_price": "10.0000"
+        }))
+        .send_request(&app)
+        .await;
+
+    test::TestRequest::patch()
+        .uri(&format!("/api/orders/{}/status", order.id))
+        .set_json(serde_json::json!({ "status": "Confirmed" }))
+        .send_request(&app)
+        .await;
+
+    test::TestRequest::patch()
+        .uri(&format!("/api/orders/{}/status", order.id))
+        .set_json(serde_json::json!({ "status": "Shipped" }))
+        .send_request(&app)
+        .await;
+
+    test::TestRequest::patch()
+        .uri(&format!("/api/orders/{}/status", order.id))
+        .set_json(serde_json::json!({ "status": "Delivered" }))
+        .send_request(&app)
+        .await;
+
+    // Delivered is terminal
+    let resp = test::TestRequest::patch()
+        .uri(&format!("/api/orders/{}/status", order.id))
+        .set_json(serde_json::json!({ "status": "Cancelled" }))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 409);
+}
+
+#[actix_web::test]
+async fn test_outbox_event_contains_order_cancelled_event_type() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "USD" }))
+        .send_request(&app)
+        .await;
+    let order: Order = test::read_body_json(resp).await;
+
+    test::TestRequest::patch()
+        .uri(&format!("/api/orders/{}/status", order.id))
+        .set_json(serde_json::json!({ "status": "Cancelled" }))
+        .send_request(&app)
+        .await;
+
+    let mut conn = pool.get().expect("Failed to get connection");
+    let events: Vec<OutboxEvent> = commerce_order_outbox::table
+        .filter(commerce_order_outbox::aggregate_id.eq(order.id))
+        .order(commerce_order_outbox::sequence_number.asc())
+        .select(OutboxEvent::as_select())
+        .load(&mut conn)
+        .expect("Failed to load outbox events");
+
+    assert_eq!(events.len(), 2); // ORDER_CREATED + ORDER_CANCELLED
+    assert_eq!(events[0].event_type, "ORDER_CREATED");
+    assert_eq!(events[1].event_type, "ORDER_CANCELLED");
+    assert_eq!(events[1].event_data["status"], "Cancelled");
+}
+
+// ── delete_line_item ───────────────────────────────────────────────────────
+
+#[actix_web::test]
+async fn test_delete_last_item_resets_total_to_zero() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "USD" }))
+        .send_request(&app)
+        .await;
+    let order: Order = test::read_body_json(resp).await;
+
+    let resp = test::TestRequest::post()
+        .uri(&format!("/api/orders/{}/items", order.id))
+        .set_json(serde_json::json!({
+            "product_sku": "ONLY-SKU",
+            "quantity": 2,
+            "unit_price": "15.0000"
+        }))
+        .send_request(&app)
+        .await;
+    let item: OrderLineItem = test::read_body_json(resp).await;
+
+    // Verify total is non-zero
+    let resp = test::TestRequest::get()
+        .uri(&format!("/api/orders/{}", order.id))
+        .send_request(&app)
+        .await;
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["total_amount"], "30.0000");
+
+    // Delete the only item
+    let resp = test::TestRequest::delete()
+        .uri(&format!("/api/orders/{}/items/{}", order.id, item.id))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 204);
+
+    // Total must reset to zero
+    let resp = test::TestRequest::get()
+        .uri(&format!("/api/orders/{}", order.id))
+        .send_request(&app)
+        .await;
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["total_amount"], "0");
+    assert_eq!(body["items"].as_array().unwrap().len(), 0);
+}
+
+#[actix_web::test]
+async fn test_delete_item_from_confirmed_order_returns_409() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "USD" }))
+        .send_request(&app)
+        .await;
+    let order: Order = test::read_body_json(resp).await;
+
+    let resp = test::TestRequest::post()
+        .uri(&format!("/api/orders/{}/items", order.id))
+        .set_json(serde_json::json!({
+            "product_sku": "SKU-001",
+            "quantity": 1,
+            "unit_price": "10.0000"
+        }))
+        .send_request(&app)
+        .await;
+    let item: OrderLineItem = test::read_body_json(resp).await;
+
+    test::TestRequest::patch()
+        .uri(&format!("/api/orders/{}/status", order.id))
+        .set_json(serde_json::json!({ "status": "Confirmed" }))
+        .send_request(&app)
+        .await;
+
+    let resp = test::TestRequest::delete()
+        .uri(&format!("/api/orders/{}/items/{}", order.id, item.id))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 409);
+}
+
+#[actix_web::test]
+async fn test_delete_item_belonging_to_different_order_returns_404() {
+    let (_container, pool) = setup_db().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "USD" }))
+        .send_request(&app)
+        .await;
+    let order_a: Order = test::read_body_json(resp).await;
+
+    let resp = test::TestRequest::post()
+        .uri("/api/orders")
+        .set_json(serde_json::json!({ "currency": "EUR" }))
+        .send_request(&app)
+        .await;
+    let order_b: Order = test::read_body_json(resp).await;
+
+    let resp = test::TestRequest::post()
+        .uri(&format!("/api/orders/{}/items", order_b.id))
+        .set_json(serde_json::json!({
+            "product_sku": "SKU-B1",
+            "quantity": 1,
+            "unit_price": "5.0000"
+        }))
+        .send_request(&app)
+        .await;
+    let item_b: OrderLineItem = test::read_body_json(resp).await;
+
+    // Try to delete order_b's item using order_a's ID
+    let resp = test::TestRequest::delete()
+        .uri(&format!("/api/orders/{}/items/{}", order_a.id, item_b.id))
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 404);
 }

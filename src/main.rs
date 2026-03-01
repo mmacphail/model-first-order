@@ -41,7 +41,10 @@ async fn main() -> std::io::Result<()> {
             Cors::default()
         };
 
+        let prometheus = order_api::build_prometheus();
+
         App::new()
+            .wrap(prometheus)
             .wrap(cors)
             .wrap(TracingLogger::default())
             .app_data(web::Data::new(pool.clone()))

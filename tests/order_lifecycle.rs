@@ -1,21 +1,36 @@
 use actix_web::{test, web, App};
+use diesel::prelude::*;
 use order_api::db::{self, DbPool};
 use order_api::models::order::Order;
 use order_api::models::order_line_item::OrderLineItem;
 use order_api::models::order_status::OrderStatus;
 use order_api::routes;
+use order_api::schema::{order_line_items, orders};
 
 fn setup_test_pool() -> DbPool {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for tests");
+    let database_url = std::env::var("DATABASE_URL_TEST")
+        .or_else(|_| std::env::var("DATABASE_URL"))
+        .expect("DATABASE_URL_TEST or DATABASE_URL must be set for tests");
     let pool = db::init_pool(&database_url);
     db::run_migrations(&pool);
     pool
 }
 
+fn cleanup(pool: &DbPool) {
+    let mut conn = pool.get().expect("Failed to get connection for cleanup");
+    diesel::delete(order_line_items::table)
+        .execute(&mut conn)
+        .expect("Failed to clean line items");
+    diesel::delete(orders::table)
+        .execute(&mut conn)
+        .expect("Failed to clean orders");
+}
+
 #[actix_web::test]
 async fn test_order_lifecycle() {
     let pool = setup_test_pool();
+    cleanup(&pool);
 
     let app = test::init_service(
         App::new()
@@ -82,6 +97,7 @@ async fn test_order_lifecycle() {
 #[actix_web::test]
 async fn test_bigdecimal_precision_preserved() {
     let pool = setup_test_pool();
+    cleanup(&pool);
 
     let app = test::init_service(
         App::new()
@@ -126,6 +142,7 @@ async fn test_bigdecimal_precision_preserved() {
 #[actix_web::test]
 async fn test_cancellation_rules() {
     let pool = setup_test_pool();
+    cleanup(&pool);
 
     let app = test::init_service(
         App::new()

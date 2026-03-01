@@ -100,18 +100,31 @@ pub async fn get_order(
 #[utoipa::path(
     get,
     path = "/api/orders",
+    params(
+        ("limit" = Option<i64>, Query, description = "Max items to return (default 50, max 100)"),
+        ("offset" = Option<i64>, Query, description = "Number of items to skip (default 0)"),
+    ),
     responses(
         (status = 200, description = "Orders list", body = Vec<Order>),
     ),
     tag = "Orders"
 )]
 #[instrument(skip(pool))]
-pub async fn list_orders(pool: web::Data<DbPool>) -> Result<HttpResponse, ApiError> {
+pub async fn list_orders(
+    pool: web::Data<DbPool>,
+    query: web::Query<PaginationParams>,
+) -> Result<HttpResponse, ApiError> {
+    let params = query.into_inner();
+    let limit = params.limit.unwrap_or(50).min(100);
+    let offset = params.offset.unwrap_or(0);
+
     let result = web::block(move || {
         let mut conn = pool.get()?;
         orders::table
             .select(Order::as_select())
             .order(orders::created_at.desc())
+            .limit(limit)
+            .offset(offset)
             .load::<Order>(&mut conn)
             .map_err(ApiError::from)
     })
@@ -128,6 +141,7 @@ pub async fn list_orders(pool: web::Data<DbPool>) -> Result<HttpResponse, ApiErr
     request_body = StatusTransitionRequest,
     responses(
         (status = 200, description = "Status updated", body = Order),
+        (status = 404, description = "Order not found"),
         (status = 409, description = "Invalid transition"),
     ),
     tag = "Orders"
@@ -143,58 +157,62 @@ pub async fn transition_status(
 
     let order = web::block(move || {
         let mut conn = pool.get()?;
+        conn.transaction::<_, ApiError, _>(|conn| {
+            let current = orders::table
+                .find(order_id)
+                .select(Order::as_select())
+                .for_update()
+                .first::<Order>(conn)
+                .optional()?
+                .ok_or(ApiError::NotFound)?;
 
-        let current = orders::table
-            .find(order_id)
-            .select(Order::as_select())
-            .first::<Order>(&mut conn)?;
-
-        // EARS: event-driven — state machine enforcement
-        if !current.status.can_transition_to(target) {
-            warn!(
-                order_id = %order_id,
-                from = ?current.status,
-                to = ?target,
-                "Invalid status transition"
-            );
-            return Err(ApiError::Conflict(format!(
-                "Cannot transition from {:?} to {:?}",
-                current.status, target
-            )));
-        }
-
-        // EARS: event-driven — set confirmed_at on confirmation
-        let confirmed_at = if target == OrderStatus::Confirmed {
-            Some(Utc::now())
-        } else {
-            current.confirmed_at
-        };
-
-        // EARS: conditional — verify total before confirmation
-        if target == OrderStatus::Confirmed {
-            let item_sum: BigDecimal = order_line_items::table
-                .filter(order_line_items::order_id.eq(order_id))
-                .select(diesel::dsl::sum(order_line_items::line_total))
-                .first::<Option<BigDecimal>>(&mut conn)?
-                .unwrap_or_default();
-
-            if item_sum != current.total_amount {
-                return Err(ApiError::Conflict(
-                    "total_amount does not match sum of line items".into(),
-                ));
+            // EARS: event-driven — state machine enforcement
+            if !current.status.can_transition_to(target) {
+                warn!(
+                    order_id = %order_id,
+                    from = ?current.status,
+                    to = ?target,
+                    "Invalid status transition"
+                );
+                return Err(ApiError::Conflict(format!(
+                    "Cannot transition from {:?} to {:?}",
+                    current.status, target
+                )));
             }
-        }
 
-        let update = OrderStatusUpdate {
-            status: target,
-            confirmed_at,
-        };
+            // EARS: event-driven — set confirmed_at on confirmation
+            let confirmed_at = if target == OrderStatus::Confirmed {
+                Some(Utc::now())
+            } else {
+                current.confirmed_at
+            };
 
-        diesel::update(orders::table.find(order_id))
-            .set(&update)
-            .returning(Order::as_returning())
-            .get_result::<Order>(&mut conn)
-            .map_err(Into::into)
+            // EARS: conditional — verify total before confirmation
+            if target == OrderStatus::Confirmed {
+                let item_sum: BigDecimal = order_line_items::table
+                    .filter(order_line_items::order_id.eq(order_id))
+                    .select(diesel::dsl::sum(order_line_items::line_total))
+                    .first::<Option<BigDecimal>>(conn)?
+                    .unwrap_or_default();
+
+                if item_sum != current.total_amount {
+                    return Err(ApiError::Conflict(
+                        "total_amount does not match sum of line items".into(),
+                    ));
+                }
+            }
+
+            let update = OrderStatusUpdate {
+                status: target,
+                confirmed_at,
+            };
+
+            diesel::update(orders::table.find(order_id))
+                .set(&update)
+                .returning(Order::as_returning())
+                .get_result::<Order>(conn)
+                .map_err(Into::into)
+        })
     })
     .await??;
 
@@ -210,6 +228,8 @@ pub async fn transition_status(
     request_body = NewLineItemRequest,
     responses(
         (status = 201, description = "Line item added", body = OrderLineItem),
+        (status = 400, description = "Invalid input"),
+        (status = 404, description = "Order not found"),
         (status = 409, description = "Order not in draft status"),
     ),
     tag = "Order Line Items"
@@ -223,46 +243,62 @@ pub async fn add_line_item(
     let order_id = path.into_inner();
     let req = body.into_inner();
 
+    // Validate line item fields
+    if req.quantity <= 0 {
+        return Err(ApiError::BadRequest(
+            "quantity must be greater than 0".into(),
+        ));
+    }
+    if req.unit_price < 0_i32 {
+        return Err(ApiError::BadRequest(
+            "unit_price must be non-negative".into(),
+        ));
+    }
+
     let item = web::block(move || {
         let mut conn = pool.get()?;
+        conn.transaction::<_, ApiError, _>(|conn| {
+            // EARS: state-driven — only draft orders accept new items
+            let order = orders::table
+                .find(order_id)
+                .select(Order::as_select())
+                .for_update()
+                .first::<Order>(conn)
+                .optional()?
+                .ok_or(ApiError::NotFound)?;
 
-        // EARS: state-driven — only draft orders accept new items
-        let order = orders::table
-            .find(order_id)
-            .select(Order::as_select())
-            .first::<Order>(&mut conn)?;
+            if order.status != OrderStatus::Draft {
+                return Err(ApiError::Conflict(
+                    "Can only add items to draft orders".into(),
+                ));
+            }
 
-        if order.status != OrderStatus::Draft {
-            return Err(ApiError::Conflict(
-                "Can only add items to draft orders".into(),
-            ));
-        }
+            let new_item = NewLineItem {
+                order_id,
+                product_sku: req.product_sku,
+                quantity: req.quantity,
+                unit_price: req.unit_price,
+            };
 
-        let new_item = NewLineItem {
-            order_id,
-            product_sku: req.product_sku,
-            quantity: req.quantity,
-            unit_price: req.unit_price,
-        };
+            let item = diesel::insert_into(order_line_items::table)
+                .values(&new_item)
+                .returning(OrderLineItem::as_returning())
+                .get_result::<OrderLineItem>(conn)?;
 
-        let item = diesel::insert_into(order_line_items::table)
-            .values(&new_item)
-            .returning(OrderLineItem::as_returning())
-            .get_result::<OrderLineItem>(&mut conn)?;
+            // Recompute total_amount from all line items
+            let new_total: BigDecimal = order_line_items::table
+                .filter(order_line_items::order_id.eq(order_id))
+                .select(diesel::dsl::sum(order_line_items::line_total))
+                .first::<Option<BigDecimal>>(conn)?
+                .unwrap_or_default();
 
-        // Recompute total_amount from all line items
-        let new_total: BigDecimal = order_line_items::table
-            .filter(order_line_items::order_id.eq(order_id))
-            .select(diesel::dsl::sum(order_line_items::line_total))
-            .first::<Option<BigDecimal>>(&mut conn)?
-            .unwrap_or_default();
+            diesel::update(orders::table.find(order_id))
+                .set(orders::total_amount.eq(&new_total))
+                .execute(conn)?;
 
-        diesel::update(orders::table.find(order_id))
-            .set(orders::total_amount.eq(&new_total))
-            .execute(&mut conn)?;
-
-        info!(order_id = %order_id, item_id = %item.id, "Line item added");
-        Ok(item)
+            info!(order_id = %order_id, item_id = %item.id, "Line item added");
+            Ok(item)
+        })
     })
     .await??;
 
@@ -280,6 +316,7 @@ pub async fn add_line_item(
     ),
     responses(
         (status = 204, description = "Line item deleted"),
+        (status = 404, description = "Order or line item not found"),
         (status = 409, description = "Order not in draft status"),
     ),
     tag = "Order Line Items"
@@ -293,39 +330,47 @@ pub async fn delete_line_item(
 
     web::block(move || {
         let mut conn = pool.get()?;
+        conn.transaction::<_, ApiError, _>(|conn| {
+            // EARS: state-driven — only draft orders allow item removal
+            let order = orders::table
+                .find(order_id)
+                .select(Order::as_select())
+                .for_update()
+                .first::<Order>(conn)
+                .optional()?
+                .ok_or(ApiError::NotFound)?;
 
-        // EARS: state-driven — only draft orders allow item removal
-        let order = orders::table
-            .find(order_id)
-            .select(Order::as_select())
-            .first::<Order>(&mut conn)?;
+            if order.status != OrderStatus::Draft {
+                return Err(ApiError::Conflict(
+                    "Can only remove items from draft orders".into(),
+                ));
+            }
 
-        if order.status != OrderStatus::Draft {
-            return Err(ApiError::Conflict(
-                "Can only remove items from draft orders".into(),
-            ));
-        }
+            let affected = diesel::delete(
+                order_line_items::table
+                    .filter(order_line_items::id.eq(item_id))
+                    .filter(order_line_items::order_id.eq(order_id)),
+            )
+            .execute(conn)?;
 
-        diesel::delete(
-            order_line_items::table
-                .filter(order_line_items::id.eq(item_id))
-                .filter(order_line_items::order_id.eq(order_id)),
-        )
-        .execute(&mut conn)?;
+            if affected == 0 {
+                return Err(ApiError::NotFound);
+            }
 
-        // Recompute total_amount (edge case: deleting last item resets to 0)
-        let new_total: BigDecimal = order_line_items::table
-            .filter(order_line_items::order_id.eq(order_id))
-            .select(diesel::dsl::sum(order_line_items::line_total))
-            .first::<Option<BigDecimal>>(&mut conn)?
-            .unwrap_or_default();
+            // Recompute total_amount (edge case: deleting last item resets to 0)
+            let new_total: BigDecimal = order_line_items::table
+                .filter(order_line_items::order_id.eq(order_id))
+                .select(diesel::dsl::sum(order_line_items::line_total))
+                .first::<Option<BigDecimal>>(conn)?
+                .unwrap_or_default();
 
-        diesel::update(orders::table.find(order_id))
-            .set(orders::total_amount.eq(&new_total))
-            .execute(&mut conn)?;
+            diesel::update(orders::table.find(order_id))
+                .set(orders::total_amount.eq(&new_total))
+                .execute(conn)?;
 
-        info!(order_id = %order_id, item_id = %item_id, "Line item deleted");
-        Ok(())
+            info!(order_id = %order_id, item_id = %item_id, "Line item deleted");
+            Ok(())
+        })
     })
     .await??;
 
@@ -353,4 +398,10 @@ pub struct NewLineItemRequest {
     #[serde(deserialize_with = "crate::serializers::deserialize_bigdecimal_from_string")]
     #[schema(value_type = String, example = "49.99")]
     pub unit_price: BigDecimal,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PaginationParams {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
 }

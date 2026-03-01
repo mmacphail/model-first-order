@@ -12,6 +12,7 @@ name = "export-openapi"
 path = "src/bin/export_openapi.rs"
 
 [dependencies]
+actix-cors = "0.7"
 actix-web = "4"
 bigdecimal = { version = "0.4", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }

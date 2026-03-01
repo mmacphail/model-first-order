@@ -80,6 +80,10 @@ gen:
 
 # ── Quality ────────────────────────────────────────────────
 
+# Fast compile check + clippy (no tests, no codegen)
+check:
+    cargo clippy -- -D warnings
+
 # Run tests
 test:
     cargo test

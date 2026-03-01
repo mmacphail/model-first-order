@@ -1,3 +1,4 @@
+use actix_cors::Cors;
 use actix_web::{web, App, HttpServer};
 use tracing::info;
 use tracing_actix_web::TracingLogger;
@@ -31,6 +32,7 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
+            .wrap(Cors::permissive())
             .wrap(TracingLogger::default())
             .app_data(web::Data::new(pool.clone()))
             .configure(routes::configure)

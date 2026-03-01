@@ -32,6 +32,7 @@ uuid = { version = "1", features = ["serde", "v4"] }
 [dev-dependencies]
 actix-rt = "2"
 tokio = { version = "1", features = ["full"] }
+testcontainers = "0.27"
 rdkafka = { version = "0.36", features = ["tokio"] }
 reqwest = { version = "0.12", features = ["json"] }
 futures = "0.3"

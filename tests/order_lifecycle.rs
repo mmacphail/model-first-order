@@ -6,38 +6,43 @@ use order_api::models::order_line_item::OrderLineItem;
 use order_api::models::order_status::OrderStatus;
 use order_api::models::outbox::OutboxEvent;
 use order_api::routes;
-use order_api::schema::{commerce_order_outbox, order_line_items, orders};
+use order_api::schema::commerce_order_outbox;
+use testcontainers::core::{ContainerPort, WaitFor};
+use testcontainers::runners::AsyncRunner;
+use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 use uuid::Uuid;
 
-fn setup_test_pool() -> DbPool {
-    dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL_TEST")
-        .or_else(|_| std::env::var("DATABASE_URL"))
-        .expect("DATABASE_URL_TEST or DATABASE_URL must be set for tests");
-    let pool = db::init_pool(&database_url);
-    db::run_migrations(&pool);
-    pool
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("bind failed")
+        .local_addr()
+        .expect("addr failed")
+        .port()
 }
 
-/// Deletes all test data. Tables are deleted in FK-dependency order:
-/// order_line_items → orders (line items reference orders via FK).
-fn cleanup(pool: &DbPool) {
-    let mut conn = pool.get().expect("Failed to get connection for cleanup");
-    diesel::delete(commerce_order_outbox::table)
-        .execute(&mut conn)
-        .expect("Failed to clean outbox");
-    diesel::delete(order_line_items::table)
-        .execute(&mut conn)
-        .expect("Failed to clean line items");
-    diesel::delete(orders::table)
-        .execute(&mut conn)
-        .expect("Failed to clean orders");
+async fn setup_db() -> (ContainerAsync<GenericImage>, DbPool) {
+    let port = free_port();
+    let container = GenericImage::new("postgres", "16-alpine")
+        .with_wait_for(WaitFor::message_on_stderr(
+            "database system is ready to accept connections",
+        ))
+        .with_mapped_port(port, ContainerPort::Tcp(5432))
+        .with_env_var("POSTGRES_USER", "postgres")
+        .with_env_var("POSTGRES_PASSWORD", "postgres")
+        .with_env_var("POSTGRES_DB", "postgres")
+        .start()
+        .await
+        .expect("Failed to start Postgres container");
+
+    let url = format!("postgres://postgres:postgres@127.0.0.1:{}/postgres", port);
+    let pool = db::init_pool(&url);
+    db::run_migrations(&pool);
+    (container, pool)
 }
 
 #[actix_web::test]
 async fn test_order_lifecycle() {
-    let pool = setup_test_pool();
-    cleanup(&pool);
+    let (_container, pool) = setup_db().await;
 
     let app = test::init_service(
         App::new()
@@ -103,8 +108,7 @@ async fn test_order_lifecycle() {
 
 #[actix_web::test]
 async fn test_bigdecimal_precision_preserved() {
-    let pool = setup_test_pool();
-    cleanup(&pool);
+    let (_container, pool) = setup_db().await;
 
     let app = test::init_service(
         App::new()
@@ -148,8 +152,7 @@ async fn test_bigdecimal_precision_preserved() {
 
 #[actix_web::test]
 async fn test_cancellation_rules() {
-    let pool = setup_test_pool();
-    cleanup(&pool);
+    let (_container, pool) = setup_db().await;
 
     let app = test::init_service(
         App::new()
@@ -204,8 +207,7 @@ async fn test_cancellation_rules() {
 
 #[actix_web::test]
 async fn test_pagination_edge_cases() {
-    let pool = setup_test_pool();
-    cleanup(&pool);
+    let (_container, pool) = setup_db().await;
 
     let app = test::init_service(
         App::new()
@@ -261,8 +263,7 @@ async fn test_pagination_edge_cases() {
 
 #[actix_web::test]
 async fn test_delete_nonexistent_line_item_returns_404() {
-    let pool = setup_test_pool();
-    cleanup(&pool);
+    let (_container, pool) = setup_db().await;
 
     let app = test::init_service(
         App::new()
@@ -291,8 +292,7 @@ async fn test_delete_nonexistent_line_item_returns_404() {
 
 #[actix_web::test]
 async fn test_outbox_events_written_with_order_lifecycle() {
-    let pool = setup_test_pool();
-    cleanup(&pool);
+    let (_container, pool) = setup_db().await;
 
     let app = test::init_service(
         App::new()

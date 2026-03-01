@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build:
-    name: Build, Lint & Unit Tests
+    name: Build, Lint & Test
     runs-on: ubuntu-latest
 
     steps:
@@ -34,9 +34,9 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-cov-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-cov-
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@v2
@@ -77,9 +77,11 @@ jobs:
       - name: Post coverage comment on PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
+        env:
+          COVERAGE_SUMMARY: ${{ steps.coverage.outputs.summary }}
         with:
           script: |
-            const summary = `${{ steps.coverage.outputs.summary }}`;
+            const summary = process.env.COVERAGE_SUMMARY;
             const runUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
             const marker = '<!-- coverage-comment -->';
             const body = `${marker}\n## Code Coverage\n\n\`\`\`\n${summary}\n\`\`\`\n\nFull HTML report: [workflow artifacts](${runUrl})`;
@@ -127,9 +129,9 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-e2e-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-e2e-
 
       - name: Cache Docker images
         id: docker-cache

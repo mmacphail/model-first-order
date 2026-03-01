@@ -1,5 +1,6 @@
 use actix_web::{test, web, App};
 use diesel::prelude::*;
+use diesel::r2d2::{ConnectionManager, Pool};
 use order_api::db::{self, DbPool};
 use order_api::models::order::Order;
 use order_api::models::order_line_item::OrderLineItem;
@@ -7,6 +8,7 @@ use order_api::models::order_status::OrderStatus;
 use order_api::models::outbox::OutboxEvent;
 use order_api::routes;
 use order_api::schema::commerce_order_outbox;
+use std::time::Duration;
 use testcontainers::core::{ContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage, ImageExt};
@@ -380,4 +382,54 @@ async fn test_outbox_events_written_with_order_lifecycle() {
     assert_eq!(last_event_data["status"], "Confirmed");
     assert!(last_event_data["items"].is_array());
     assert_eq!(last_event_data["items"].as_array().unwrap().len(), 1);
+}
+
+#[actix_web::test]
+async fn test_health_check_returns_database_ok() {
+    let (_container, pool) = setup_db().await;
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::get()
+        .uri("/health")
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["status"], "ok");
+    assert_eq!(body["database"], "ok");
+    assert!(body.get("detail").is_none());
+}
+
+#[actix_web::test]
+async fn test_health_check_returns_degraded_when_db_unreachable() {
+    // Build a pool pointing to a non-existent host with a very short timeout
+    let manager = ConnectionManager::<diesel::PgConnection>::new(
+        "postgres://postgres:postgres@127.0.0.1:1/nonexistent",
+    );
+    let bad_pool: DbPool = Pool::builder()
+        .connection_timeout(Duration::from_millis(100))
+        .build_unchecked(manager);
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(bad_pool))
+            .configure(routes::configure),
+    )
+    .await;
+
+    let resp = test::TestRequest::get()
+        .uri("/health")
+        .send_request(&app)
+        .await;
+    assert_eq!(resp.status(), 503);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["status"], "degraded");
+    assert_eq!(body["database"], "error");
+    assert_eq!(body["detail"], "database unreachable");
 }

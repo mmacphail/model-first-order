@@ -3,6 +3,7 @@ use utoipa::OpenApi;
 #[derive(OpenApi)]
 #[openapi(
     paths(
+        crate::handlers::health::health,
         crate::handlers::orders::create_order,
         crate::handlers::orders::get_order,
         crate::handlers::orders::list_orders,
@@ -18,8 +19,10 @@ use utoipa::OpenApi;
         crate::models::order::OrderWithItems,
         crate::handlers::orders::StatusTransitionRequest,
         crate::handlers::orders::NewLineItemRequest,
+        crate::handlers::health::HealthResponse,
     )),
     tags(
+        (name = "Health", description = "Service health checks"),
         (name = "Orders", description = "Order management"),
         (name = "Order Line Items", description = "Line item management"),
     )

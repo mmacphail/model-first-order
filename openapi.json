@@ -259,10 +259,68 @@
           }
         }
       }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Service healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                },
+                "example": {
+                  "database": "ok",
+                  "status": "ok"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service degraded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                },
+                "example": {
+                  "database": "error",
+                  "detail": "database unreachable",
+                  "status": "degraded"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "database"
+        ],
+        "properties": {
+          "database": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
       "NewLineItemRequest": {
         "type": "object",
         "required": [
@@ -427,6 +485,10 @@
     }
   },
   "tags": [
+    {
+      "name": "Health",
+      "description": "Service health checks"
+    },
     {
       "name": "Orders",
       "description": "Order management"

@@ -46,8 +46,9 @@ async fn main() -> std::io::Result<()> {
             .endpoint("/metrics")
             .exclude("/metrics")
             .exclude("/health")
+            .mask_unmatched_patterns("UNKNOWN")
             .build()
-            .unwrap();
+            .expect("Failed to initialize Prometheus metrics");
 
         App::new()
             .wrap(prometheus)

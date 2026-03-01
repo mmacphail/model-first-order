@@ -5,9 +5,9 @@ default:
 
 # ── Development ────────────────────────────────────────────
 
-# Start the API server
+# Start the API server with auto-reload on file changes
 dev:
-    cargo run --bin order-api
+    cargo watch -x 'run --bin order-api'
 
 # Format code
 fmt:

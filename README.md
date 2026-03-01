@@ -46,6 +46,7 @@ Order
 - [Rust](https://rustup.rs/) (stable)
 - [just](https://github.com/casey/just) — `cargo install just`
 - [Diesel CLI](https://diesel.rs/guides/getting-started) — `cargo install diesel_cli --no-default-features --features postgres`
+- [cargo-watch](https://github.com/watchexec/cargo-watch) — `cargo install cargo-watch`
 - Docker (for Postgres)
 
 ## Setup
@@ -84,7 +85,7 @@ The API starts at `http://localhost:8080`. Swagger UI is at `http://localhost:80
 ## Just Commands
 
 ```bash
-just dev             # Run the API server
+just dev             # Run the API server (auto-reloads on changes)
 just db              # Start Postgres (Docker Compose)
 just db-stop         # Stop Postgres
 just migrate         # Run Diesel migrations

@@ -263,35 +263,6 @@
   },
   "components": {
     "schemas": {
-      "NewLineItem": {
-        "type": "object",
-        "required": [
-          "order_id",
-          "product_sku",
-          "quantity",
-          "unit_price"
-        ],
-        "properties": {
-          "order_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "product_sku": {
-            "type": "string",
-            "example": "SKU-WIDGET-001"
-          },
-          "quantity": {
-            "type": "integer",
-            "format": "int32",
-            "example": 3,
-            "minimum": 1
-          },
-          "unit_price": {
-            "type": "string",
-            "example": "49.99"
-          }
-        }
-      },
       "NewLineItemRequest": {
         "type": "object",
         "required": [

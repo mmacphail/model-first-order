@@ -154,5 +154,11 @@ quality:
     cargo test
     @echo "All checks passed"
 
-# Pre-commit checks: fmt + clippy + test
-pre-commit: quality
+# Pre-commit checks: gen + diff guard + fmt + clippy + test
+pre-commit:
+    just gen
+    git diff --exit-code openapi.json || (echo "openapi.json is stale — stage it and retry" && exit 1)
+    cargo fmt -- --check
+    cargo clippy -- -D warnings
+    cargo test
+    @echo "All checks passed"

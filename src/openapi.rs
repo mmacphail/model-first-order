@@ -14,7 +14,6 @@ use utoipa::OpenApi;
         crate::models::order::Order,
         crate::models::order::NewOrder,
         crate::models::order_line_item::OrderLineItem,
-        crate::models::order_line_item::NewLineItem,
         crate::models::order_status::OrderStatus,
         crate::models::order::OrderWithItems,
         crate::handlers::orders::StatusTransitionRequest,

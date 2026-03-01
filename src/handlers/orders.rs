@@ -2,7 +2,7 @@ use actix_web::{web, HttpResponse};
 use bigdecimal::BigDecimal;
 use chrono::Utc;
 use diesel::prelude::*;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tracing::{info, instrument, warn};
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -11,7 +11,8 @@ use crate::db::DbPool;
 use crate::errors::ApiError;
 use crate::models::order::*;
 use crate::models::order_line_item::*;
-use crate::models::order_status::OrderStatus;
+use crate::models::order_status::{OrderStatus, ORDER_CREATED, ORDER_UPDATED};
+use crate::models::outbox::insert_outbox_event;
 use crate::schema::{order_line_items, orders};
 
 // ── Create Order ──────────────────────────────────────────
@@ -43,11 +44,16 @@ pub async fn create_order(
 
     let order = web::block(move || {
         let mut conn = pool.get()?;
-        diesel::insert_into(orders::table)
-            .values(&new_order)
-            .returning(Order::as_returning())
-            .get_result(&mut conn)
-            .map_err(ApiError::from)
+        conn.transaction::<_, ApiError, _>(|conn| {
+            let order = diesel::insert_into(orders::table)
+                .values(&new_order)
+                .returning(Order::as_returning())
+                .get_result::<Order>(conn)?;
+
+            insert_outbox_event(conn, order.id, ORDER_CREATED)?;
+
+            Ok(order)
+        })
     })
     .await??;
 
@@ -207,11 +213,14 @@ pub async fn transition_status(
                 confirmed_at,
             };
 
-            diesel::update(orders::table.find(order_id))
+            let order = diesel::update(orders::table.find(order_id))
                 .set(&update)
                 .returning(Order::as_returning())
-                .get_result::<Order>(conn)
-                .map_err(Into::into)
+                .get_result::<Order>(conn)?;
+
+            insert_outbox_event(conn, order_id, target.as_event_type())?;
+
+            Ok(order)
         })
     })
     .await??;
@@ -296,6 +305,8 @@ pub async fn add_line_item(
                 .set(orders::total_amount.eq(&new_total))
                 .execute(conn)?;
 
+            insert_outbox_event(conn, order_id, ORDER_UPDATED)?;
+
             info!(order_id = %order_id, item_id = %item.id, "Line item added");
             Ok(item)
         })
@@ -368,6 +379,8 @@ pub async fn delete_line_item(
                 .set(orders::total_amount.eq(&new_total))
                 .execute(conn)?;
 
+            insert_outbox_event(conn, order_id, ORDER_UPDATED)?;
+
             info!(order_id = %order_id, item_id = %item_id, "Line item deleted");
             Ok(())
         })
@@ -378,13 +391,6 @@ pub async fn delete_line_item(
 }
 
 // ── Response / Request types (utoipa-annotated) ───────────
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct OrderWithItems {
-    #[serde(flatten)]
-    pub order: Order,
-    pub items: Vec<OrderLineItem>,
-}
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct StatusTransitionRequest {

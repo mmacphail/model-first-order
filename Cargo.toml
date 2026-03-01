@@ -16,7 +16,7 @@ actix-cors = "0.7"
 actix-web = "4"
 bigdecimal = { version = "0.4", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-diesel = { version = "2.2", features = ["postgres", "r2d2", "chrono", "uuid", "numeric"] }
+diesel = { version = "2.2", features = ["postgres", "r2d2", "chrono", "uuid", "numeric", "serde_json"] }
 diesel-derive-enum = { version = "2.1", features = ["postgres"] }
 diesel_migrations = "2.2"
 dotenvy = "0.15"

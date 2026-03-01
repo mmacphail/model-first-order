@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use crate::models::order_line_item::OrderLineItem;
 use crate::models::order_status::OrderStatus;
 use crate::schema::orders;
 use crate::serializers::serialize_bigdecimal_as_string;
@@ -45,4 +46,12 @@ pub struct NewOrder {
 pub struct OrderStatusUpdate {
     pub status: OrderStatus,
     pub confirmed_at: Option<DateTime<Utc>>,
+}
+
+/// Full aggregate view: order + its line items.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct OrderWithItems {
+    #[serde(flatten)]
+    pub order: Order,
+    pub items: Vec<OrderLineItem>,
 }

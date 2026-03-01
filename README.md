@@ -707,7 +707,7 @@ The `commerce_order_outbox` table. Not exposed via the API.
 | `total_amount` | `NUMERIC(19,4)` | Default `0`, recomputed on item add/delete |
 | `confirmed_at` | `TIMESTAMPTZ` | Nullable; set on Draft to Confirmed transition |
 | `created_at` | `TIMESTAMPTZ` | Set on insert |
-| `updated_at` | `TIMESTAMPTZ` | Auto-updated by Diesel trigger |
+| `updated_at` | `TIMESTAMPTZ` | Auto-updated by database trigger |
 
 Index: `idx_orders_status` on `status`.
 

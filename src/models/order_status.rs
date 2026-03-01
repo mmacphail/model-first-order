@@ -22,10 +22,10 @@ pub enum OrderStatus {
 }
 
 impl OrderStatus {
-    /// Returns the SCREAMING_SNAKE outbox event type for this status.
+    /// Returns the SCREAMING_SNAKE outbox event type for a status transition.
     pub fn as_event_type(&self) -> &'static str {
         match self {
-            OrderStatus::Draft => "ORDER_DRAFTED",
+            OrderStatus::Draft => ORDER_CREATED,
             OrderStatus::Confirmed => "ORDER_CONFIRMED",
             OrderStatus::Shipped => "ORDER_SHIPPED",
             OrderStatus::Delivered => "ORDER_DELIVERED",

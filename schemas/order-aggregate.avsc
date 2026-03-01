@@ -1,0 +1,97 @@
+{
+  "type": "record",
+  "name": "OrderAggregate",
+  "namespace": "com.commerce.order",
+  "doc": "Full order aggregate payload written to the outbox by order-api. This schema defines the structure of the event_data column in commerce_order_outbox.",
+  "fields": [
+    {
+      "name": "id",
+      "type": "string",
+      "doc": "UUID of the order."
+    },
+    {
+      "name": "status",
+      "type": {
+        "type": "enum",
+        "name": "OrderStatus",
+        "symbols": ["Draft", "Confirmed", "Shipped", "Delivered", "Cancelled"],
+        "doc": "Current status of the order in its lifecycle."
+      }
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "doc": "ISO 4217 currency code (e.g. EUR, USD)."
+    },
+    {
+      "name": "total_amount",
+      "type": "string",
+      "doc": "Order total as a decimal string preserving NUMERIC(19,4) precision."
+    },
+    {
+      "name": "confirmed_at",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "ISO 8601 timestamp when the order was confirmed, or null if not yet confirmed."
+    },
+    {
+      "name": "created_at",
+      "type": "string",
+      "doc": "ISO 8601 timestamp when the order was created."
+    },
+    {
+      "name": "updated_at",
+      "type": "string",
+      "doc": "ISO 8601 timestamp of the last modification."
+    },
+    {
+      "name": "items",
+      "type": {
+        "type": "array",
+        "items": {
+          "type": "record",
+          "name": "LineItem",
+          "doc": "A single line item within the order.",
+          "fields": [
+            {
+              "name": "id",
+              "type": "string",
+              "doc": "UUID of the line item."
+            },
+            {
+              "name": "order_id",
+              "type": "string",
+              "doc": "UUID of the parent order."
+            },
+            {
+              "name": "product_sku",
+              "type": "string",
+              "doc": "Stock-keeping unit identifier for the product."
+            },
+            {
+              "name": "quantity",
+              "type": "int",
+              "doc": "Number of units ordered (must be >= 1)."
+            },
+            {
+              "name": "unit_price",
+              "type": "string",
+              "doc": "Price per unit as a decimal string preserving NUMERIC(19,4) precision."
+            },
+            {
+              "name": "line_total",
+              "type": "string",
+              "doc": "Computed total (quantity * unit_price) as a decimal string."
+            },
+            {
+              "name": "created_at",
+              "type": "string",
+              "doc": "ISO 8601 timestamp when the line item was added."
+            }
+          ]
+        }
+      },
+      "doc": "Order line items."
+    }
+  ]
+}

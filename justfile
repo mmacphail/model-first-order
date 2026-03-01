@@ -83,6 +83,12 @@ reload-connector:
 connector-status:
     curl -s http://localhost:8083/connectors/order-outbox-connector/status | jq .
 
+# ── Schema Registry ─────────────────────────────────────
+
+# Register Avro schemas in Schema Registry with BACKWARD compatibility
+register-schemas:
+    ./scripts/register-schemas.sh
+
 # ── Smoke test ────────────────────────────────────────────
 
 # Create a draft order with a line item, then confirm it
